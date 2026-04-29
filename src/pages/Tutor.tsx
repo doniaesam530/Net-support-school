@@ -27,7 +27,11 @@ export default function Tutor() {
   const [blockInternet, setBlockInternetLocal] = useState(false);
   const [sessionTime, setSessionTime] = useState(0);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
-  const [newQ, setNewQ] = useState({ text: '', options: ['', '', '', ''] });
+  const [newQ, setNewQ] = useState({
+    text: '',
+    options: ['', '', '', ''],
+    correct_answer: ''
+  });
   const [quizSent, setQuizSent] = useState(false);
   const [classes, setClasses] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -51,6 +55,14 @@ export default function Tutor() {
   useEffect(() => {
     privateChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, selectedStudent]);
+
+  // ✅ FIX: Auto-refresh results every 5 seconds after quiz is sent
+  useEffect(() => {
+    if (!quizSent) return;
+    fetchQuizResults();
+    const interval = setInterval(() => fetchQuizResults(), 5000);
+    return () => clearInterval(interval);
+  }, [quizSent]);
 
   const formatTime = (s: number) => {
     const h = Math.floor(s / 3600).toString().padStart(2, '0');
@@ -81,16 +93,37 @@ export default function Tutor() {
   };
 
   const handleAddQuestion = () => {
-    if (!newQ.text.trim() || newQ.options.some(o => !o.trim())) return;
-    setQuizQuestions(prev => [...prev, { text: newQ.text, options: newQ.options.filter(o => o.trim()) }]);
-    setNewQ({ text: '', options: ['', '', '', ''] });
+    const filteredOptions = newQ.options.filter(o => o.trim());
+
+    if (!newQ.text.trim() || filteredOptions.length < 2 || !newQ.correct_answer) return;
+
+    if (!filteredOptions.includes(newQ.correct_answer)) {
+      alert("Correct answer must be one of the options");
+      return;
+    }
+
+    setQuizQuestions(prev => [
+      ...prev,
+      {
+        text: newQ.text,
+        options: filteredOptions,
+        correct_answer: newQ.correct_answer
+      }
+    ]);
+
+    setNewQ({ text: '', options: ['', '', '', ''], correct_answer: '' });
   };
 
   const handleSendQuiz = async () => {
     if (quizQuestions.length === 0) return;
     await createQuiz(quizQuestions);
     setQuizSent(true);
-    setTimeout(() => fetchQuizResults(), 2000);
+  };
+
+  const handleResetQuiz = () => {
+    setQuizSent(false);
+    setQuizQuestions([]);
+    setNewQ({ text: '', options: ['', '', '', ''], correct_answer: '' });
   };
 
   const statusColor = (s: string) =>
@@ -294,13 +327,36 @@ export default function Tutor() {
                             onChange={e => {
                               const next = [...newQ.options];
                               next[i] = e.target.value;
-                              setNewQ(prev => ({ ...prev, options: next }));
+                              setNewQ(prev => ({ ...prev, options: next, correct_answer: '' }));
                             }}
                             placeholder={`Option ${String.fromCharCode(65 + i)}`}
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 mb-1.5"
                           />
                         ))}
-                        <button onClick={handleAddQuestion} className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition mt-1">
+
+                        {newQ.options.filter(o => o.trim()).length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-xs text-gray-400 mb-1">Correct answer:</p>
+                            {newQ.options
+                              .filter(o => o.trim())
+                              .map((opt, i) => (
+                                <label key={i} className="flex items-center gap-2 text-xs text-gray-300 mb-1 cursor-pointer">
+                                  <input
+                                    type="radio"
+                                    name="correct_answer"
+                                    checked={newQ.correct_answer === opt}
+                                    onChange={() => setNewQ(prev => ({ ...prev, correct_answer: opt }))}
+                                  />
+                                  {opt}
+                                </label>
+                              ))}
+                          </div>
+                        )}
+
+                        <button
+                          onClick={handleAddQuestion}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition mt-1"
+                        >
                           <Plus className="w-3.5 h-3.5" /> Add Question
                         </button>
                       </div>
@@ -313,7 +369,16 @@ export default function Tutor() {
                               <span className="text-gray-300">{i + 1}. {q.text}</span>
                               <div className="flex flex-wrap gap-1 mt-1">
                                 {q.options.map((o, j) => (
-                                  <span key={j} className="text-[10px] bg-gray-700 px-2 py-0.5 rounded">{o}</span>
+                                  <span
+                                    key={j}
+                                    className={`text-[10px] px-2 py-0.5 rounded ${
+                                      o === q.correct_answer
+                                        ? 'bg-emerald-600/30 text-emerald-400 font-medium'
+                                        : 'bg-gray-700 text-gray-300'
+                                    }`}
+                                  >
+                                    {o === q.correct_answer ? '✓ ' : ''}{o}
+                                  </span>
                                 ))}
                               </div>
                             </div>
@@ -322,7 +387,10 @@ export default function Tutor() {
                       )}
 
                       {quizQuestions.length > 0 && (
-                        <button onClick={handleSendQuiz} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">
+                        <button
+                          onClick={handleSendQuiz}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition"
+                        >
                           <Send className="w-3.5 h-3.5" /> Send Quiz to All
                         </button>
                       )}
@@ -331,39 +399,65 @@ export default function Tutor() {
                     <div>
                       <div className="flex items-center justify-between mb-3">
                         <p className="text-sm text-emerald-400 font-medium">Quiz sent! Live results:</p>
-                        <button
-                          onClick={() => { fetchQuizResults(); }}
-                          className="flex items-center gap-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition"
-                        >
-                          <BarChart3 className="w-3 h-3" /> Refresh
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={fetchQuizResults}
+                            className="flex items-center gap-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition"
+                          >
+                            <BarChart3 className="w-3 h-3" /> Refresh
+                          </button>
+                          {/* ✅ FIX: زر لإعادة ضبط الكويز وإنشاء واحد جديد */}
+                          <button
+                            onClick={handleResetQuiz}
+                            className="flex items-center gap-1 px-2 py-1 bg-red-800/40 hover:bg-red-700/40 text-red-400 rounded text-xs transition"
+                          >
+                            <X className="w-3 h-3" /> New Quiz
+                          </button>
+                        </div>
                       </div>
+
                       {quizResults.length === 0 ? (
                         <p className="text-xs text-gray-500">Waiting for answers...</p>
                       ) : (
                         <div className="space-y-4">
-                          {quizResults.map((qr, i) => (
-                            <div key={i}>
-                              <p className="text-xs text-gray-400 mb-1">{i + 1}. {qr.question}</p>
-                              <div className="h-28">
-                                <ResponsiveContainer width="100%" height="100%">
-                                  <BarChart data={Object.entries(qr.counts).map(([name, value]) => ({ name, value }))}>
-                                    <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
-                                    <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} allowDecimals={false} />
-                                    <Tooltip
-                                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
-                                      labelStyle={{ color: '#e5e7eb' }}
-                                    />
-                                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                                      {Object.entries(qr.counts).map((_, j) => (
-                                        <Cell key={j} fill={CHART_COLORS[j % CHART_COLORS.length]} />
-                                      ))}
-                                    </Bar>
-                                  </BarChart>
-                                </ResponsiveContainer>
+                          {quizResults.map((qr, i) => {
+                            // ✅ FIX: نحدد اللون الأخضر للإجابة الصح في الشارت
+                            const correctAnswer = (qr as any).correct_answer as string | undefined;
+                            const chartData = Object.entries(qr.counts).map(([name, value]) => ({ name, value }));
+                            return (
+                              <div key={i}>
+                                <p className="text-xs text-gray-400 mb-1">{i + 1}. {qr.question}</p>
+                                {correctAnswer && (
+                                  <p className="text-[10px] text-emerald-400 mb-1">✓ Correct: {correctAnswer}</p>
+                                )}
+                                <div className="h-28">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={chartData}>
+                                      <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+                                      <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} allowDecimals={false} />
+                                      <Tooltip
+                                        contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                                        labelStyle={{ color: '#e5e7eb' }}
+                                      />
+                                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                                        {chartData.map((entry, j) => (
+                                          <Cell
+                                            key={j}
+                                            // ✅ FIX: الإجابة الصح باللون الأخضر، الغلط بالألوان العادية
+                                            fill={
+                                              correctAnswer && entry.name === correctAnswer
+                                                ? '#10b981'
+                                                : CHART_COLORS[j % CHART_COLORS.length]
+                                            }
+                                          />
+                                        ))}
+                                      </Bar>
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>

@@ -67,6 +67,7 @@ class CommandRequest(BaseModel):
 class QuizQuestion(BaseModel):
     text: str
     options: list[str]
+    correct_answer: str
 
 
 class QuizRequest(BaseModel):
@@ -135,14 +136,29 @@ async def send_command(req: CommandRequest):
 @app.post("/api/quiz")
 def create_quiz(req: QuizRequest):
     global QUIZ_DATA, QUIZ_ANSWERS
-    QUIZ_DATA = {"questions": [{"text": q.text, "options": q.options} for q in req.questions]}
+    QUIZ_DATA = {
+        "questions": [
+            {
+                "text": q.text,
+                "options": q.options,
+                "correct_answer": q.correct_answer
+            }
+            for q in req.questions
+        ]
+    }
     QUIZ_ANSWERS = {}
     return {"status": "ok"}
 
 
 @app.get("/api/quiz")
 def get_quiz():
-    return QUIZ_DATA
+    # ✅ FIX: لا نرجع correct_answer للطالب
+    return {
+        "questions": [
+            {"text": q["text"], "options": q["options"]}
+            for q in QUIZ_DATA.get("questions", [])
+        ]
+    }
 
 
 @app.post("/api/quiz/answer")
@@ -153,20 +169,54 @@ def submit_answer(req: QuizAnswerRequest):
 
 @app.get("/api/quiz/results")
 def quiz_results():
-    if not QUIZ_DATA.get("questions"):
+    questions = QUIZ_DATA.get("questions", [])
+
+    if not questions:
         return {"questions": []}
+
     result = []
-    for i, q in enumerate(QUIZ_DATA["questions"]):
-        counts: dict[str, int] = {}
-        for opt in q["options"]:
-            counts[opt] = 0
+
+    for i, q in enumerate(questions):
+        counts = {opt: 0 for opt in q.get("options", [])}
+
         for answers in QUIZ_ANSWERS.values():
             if i < len(answers):
                 ans = answers[i]
                 if ans in counts:
                     counts[ans] += 1
-        result.append({"question": q["text"], "counts": counts})
+
+        result.append({
+            "question": q.get("text", ""),
+            "counts": counts,
+            "correct_answer": q.get("correct_answer", "")
+        })
+
     return {"questions": result}
+
+
+@app.get("/api/quiz/scores")
+def quiz_scores():
+    if not QUIZ_DATA.get("questions"):
+        return {"students": []}
+
+    results = []
+
+    for student_id, answers in QUIZ_ANSWERS.items():
+        score = 0
+
+        for i, student_ans in enumerate(answers):
+            if i < len(QUIZ_DATA["questions"]):
+                correct = QUIZ_DATA["questions"][i]["correct_answer"]
+                if student_ans == correct:
+                    score += 1
+
+        results.append({
+            "student_id": student_id,
+            "score": score,
+            "total": len(QUIZ_DATA["questions"])
+        })
+
+    return {"students": results}
 
 
 @app.get("/api/session-log")
@@ -189,7 +239,14 @@ async def ws_tutor(websocket: WebSocket):
             target = data.get("target", "all")
 
             if msg_type == "CHAT":
-                chat_msg = {"type": "CHAT", "payload": {"from": "Tutor", "text": payload.get("text", ""), "time": datetime.now().strftime("%H:%M:%S")}}
+                chat_msg = {
+                    "type": "CHAT",
+                    "payload": {
+                        "from": "Tutor",
+                        "text": payload.get("text", ""),
+                        "time": datetime.now().strftime("%H:%M:%S")
+                    }
+                }
                 if target == "all":
                     for sid, ws in student_ws_connections.items():
                         try:
@@ -220,7 +277,10 @@ async def ws_student(websocket: WebSocket, student_id: str):
 
     if tutor_ws:
         try:
-            await tutor_ws.send_json({"type": "STUDENT_JOIN", "payload": {"id": student_id, "status": "online"}})
+            await tutor_ws.send_json({
+                "type": "STUDENT_JOIN",
+                "payload": {"id": student_id, "status": "online"}
+            })
         except Exception:
             pass
 
@@ -233,28 +293,44 @@ async def ws_student(websocket: WebSocket, student_id: str):
             if msg_type == "CHAT":
                 if tutor_ws:
                     try:
-                        await tutor_ws.send_json({"type": "CHAT", "payload": {"from": student_id, "text": payload.get("text", ""), "time": datetime.now().strftime("%H:%M:%S")}})
+                        await tutor_ws.send_json({
+                            "type": "CHAT",
+                            "payload": {
+                                "from": student_id,
+                                "text": payload.get("text", ""),
+                                "time": datetime.now().strftime("%H:%M:%S")
+                            }
+                        })
                     except Exception:
                         pass
 
             elif msg_type == "QUIZ_ANSWER":
                 answers = payload.get("answers", [])
                 QUIZ_ANSWERS[student_id] = answers
+
                 if tutor_ws:
                     try:
-                        await tutor_ws.send_json({"type": "QUIZ_ANSWER", "payload": {"student_id": student_id}})
+                        await tutor_ws.send_json({
+                            "type": "QUIZ_ANSWER",
+                            "payload": {"student_id": student_id}
+                        })
                     except Exception:
                         pass
 
     except WebSocketDisconnect:
         student_ws_connections.pop(student_id, None)
+
         for s in STUDENTS:
             if s["id"] == student_id:
                 s["status"] = "offline"
                 break
+
         if tutor_ws:
             try:
-                await tutor_ws.send_json({"type": "STATUS_UPDATE", "payload": {"id": student_id, "status": "offline"}})
+                await tutor_ws.send_json({
+                    "type": "STATUS_UPDATE",
+                    "payload": {"id": student_id, "status": "offline"}
+                })
             except Exception:
                 pass
 
