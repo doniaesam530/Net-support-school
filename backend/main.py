@@ -34,14 +34,14 @@ for i in range(1, 11):
 STUDENTS = [
     {"id": f"student-{i}", "name": f"Student {i}", "email": f"student{i}@edu.com",
      "class": random.choice(["CS101", "Math202", "Physics301"]),
-     "status": random.choice(["online", "idle", "offline"])}
+     "status": "offline"}
     for i in range(1, 11)
 ]
 
 CLASSES = ["CS101", "Math202", "Physics301"]
 
 QUIZ_DATA: dict = {"questions": []}
-QUIZ_ANSWERS: dict = {}  # student_id -> answers
+QUIZ_ANSWERS: dict = {}
 
 SESSION_LOG: list[dict] = []
 
@@ -49,6 +49,9 @@ SESSION_LOG: list[dict] = []
 
 tutor_ws: Optional[WebSocket] = None
 student_ws_connections: dict[str, WebSocket] = {}
+
+# last activity time for each student
+student_last_seen: dict[str, datetime] = {}
 
 
 # --- Models ---
@@ -189,7 +192,15 @@ async def ws_tutor(websocket: WebSocket):
             target = data.get("target", "all")
 
             if msg_type == "CHAT":
-                chat_msg = {"type": "CHAT", "payload": {"from": "Tutor", "text": payload.get("text", ""), "time": datetime.now().strftime("%H:%M:%S")}}
+                chat_msg = {
+                    "type": "CHAT",
+                    "payload": {
+                        "from": "Tutor",
+                        "text": payload.get("text", ""),
+                        "time": datetime.now().strftime("%H:%M:%S")
+                    }
+                }
+
                 if target == "all":
                     for sid, ws in student_ws_connections.items():
                         try:
@@ -212,6 +223,7 @@ async def ws_tutor(websocket: WebSocket):
 async def ws_student(websocket: WebSocket, student_id: str):
     await websocket.accept()
     student_ws_connections[student_id] = websocket
+    student_last_seen[student_id] = datetime.now()
 
     for s in STUDENTS:
         if s["id"] == student_id:
@@ -220,63 +232,110 @@ async def ws_student(websocket: WebSocket, student_id: str):
 
     if tutor_ws:
         try:
-            await tutor_ws.send_json({"type": "STUDENT_JOIN", "payload": {"id": student_id, "status": "online"}})
+            await tutor_ws.send_json({
+                "type": "STUDENT_JOIN",
+                "payload": {"id": student_id, "status": "online"}
+            })
         except Exception:
             pass
 
     try:
         while True:
             data = await websocket.receive_json()
+
+            # last activity update
+            student_last_seen[student_id] = datetime.now()
+
+            for s in STUDENTS:
+                if s["id"] == student_id:
+                    s["status"] = "active"
+                    break
+
             msg_type = data.get("type")
             payload = data.get("payload", {})
 
             if msg_type == "CHAT":
                 if tutor_ws:
                     try:
-                        await tutor_ws.send_json({"type": "CHAT", "payload": {"from": student_id, "text": payload.get("text", ""), "time": datetime.now().strftime("%H:%M:%S")}})
+                        await tutor_ws.send_json({
+                            "type": "CHAT",
+                            "payload": {
+                                "from": student_id,
+                                "text": payload.get("text", ""),
+                                "time": datetime.now().strftime("%H:%M:%S")
+                            }
+                        })
                     except Exception:
                         pass
 
             elif msg_type == "QUIZ_ANSWER":
                 answers = payload.get("answers", [])
                 QUIZ_ANSWERS[student_id] = answers
+
                 if tutor_ws:
                     try:
-                        await tutor_ws.send_json({"type": "QUIZ_ANSWER", "payload": {"student_id": student_id}})
+                        await tutor_ws.send_json({
+                            "type": "QUIZ_ANSWER",
+                            "payload": {"student_id": student_id}
+                        })
                     except Exception:
                         pass
 
     except WebSocketDisconnect:
         student_ws_connections.pop(student_id, None)
+        student_last_seen.pop(student_id, None)
+
         for s in STUDENTS:
             if s["id"] == student_id:
                 s["status"] = "offline"
                 break
+
         if tutor_ws:
             try:
-                await tutor_ws.send_json({"type": "STATUS_UPDATE", "payload": {"id": student_id, "status": "offline"}})
+                await tutor_ws.send_json({
+                    "type": "STATUS_UPDATE",
+                    "payload": {"id": student_id, "status": "offline"}
+                })
             except Exception:
                 pass
 
 
-# --- Background Task: Random Status Updates ---
+# --- Real Status Monitor ---
 
-async def random_status_updates():
+async def monitor_students():
     while True:
-        await asyncio.sleep(15)
-        indices = random.sample(range(len(STUDENTS)), min(3, len(STUDENTS)))
+        await asyncio.sleep(5)
+
         updates = []
-        for idx in indices:
-            new_status = random.choice(["online", "idle", "offline"])
-            STUDENTS[idx]["status"] = new_status
-            updates.append({"id": STUDENTS[idx]["id"], "status": new_status})
-        if tutor_ws:
+
+        for s in STUDENTS:
+            sid = s["id"]
+
+            if sid in student_last_seen:
+                diff = (datetime.now() - student_last_seen[sid]).seconds
+
+                if diff > 20:
+                    new_status = "idle"
+                else:
+                    new_status = "active"
+
+                if s["status"] != new_status:
+                    s["status"] = new_status
+                    updates.append({
+                        "id": sid,
+                        "status": new_status
+                    })
+
+        if tutor_ws and updates:
             try:
-                await tutor_ws.send_json({"type": "STATUS_UPDATE", "payload": {"updates": updates}})
+                await tutor_ws.send_json({
+                    "type": "STATUS_UPDATE",
+                    "payload": {"updates": updates}
+                })
             except Exception:
                 pass
 
 
 @app.on_event("startup")
 async def startup():
-    asyncio.create_task(random_status_updates())
+    asyncio.create_task(monitor_students())

@@ -5,7 +5,7 @@ export interface Student {
   name: string;
   email: string;
   class: string;
-  status: 'online' | 'idle' | 'offline';
+  status: 'active' | 'online' | 'idle' | 'offline';
 }
 
 export interface ChatMessage {
@@ -21,6 +21,7 @@ export interface LogEntry {
 }
 
 export interface QuizQuestion {
+  correct_answer: string;
   text: string;
   options: string[];
 }
