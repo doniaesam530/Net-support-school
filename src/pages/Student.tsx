@@ -24,6 +24,19 @@ export default function Student() {
     }
   }, [quiz]);
 
+  // update Heartbeat
+  useEffect(() => {
+    if (wsConnected) {
+      const heartbeat = setInterval(() => {
+        //  update last seen
+        sendChat("PING");
+      }, 10000); // every 10 seconds
+
+      return () => clearInterval(heartbeat);
+    }
+  }, [wsConnected, sendChat]);
+  // -------------------------------------------------------
+
   const handleSubmitQuiz = async () => {
     await submitQuizAnswer(quizAnswers);
     setQuizSubmitted(true);
