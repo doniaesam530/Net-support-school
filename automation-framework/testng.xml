@@ -1,0 +1,19 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+
+<suite name="EduControl Automation Suite">
+
+    <test name="All Tests">
+
+        <classes>
+
+            <class name="tests.LoginTest"/>
+            <class name="tests.TutorDashboardTest"/>
+            <class name="tests.StudentTest"/>
+            <class name="tests.AdminTest"/>
+            <class name="tests.QuizTest"/>
+
+        </classes>
+
+    </test>
+
+</suite>

@@ -24,6 +24,7 @@ export interface QuizQuestion {
   correct_answer: string;
   text: string;
   options: string[];
+  correct_answer: string; // ✅ FIX: was missing
 }
 
 export interface QuizResult {
@@ -227,10 +228,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // ✅ FIX: كانت بتجيب من /api/quiz/scores وبترجع { students: [] }
+  //         الصح هو /api/quiz/results اللي بترجع { questions: [...] } مع counts
   const fetchQuizResults = async () => {
     const res = await fetch('/api/quiz/results');
     const data = await res.json();
-    setQuizResults(data.questions || []);
+    setQuizResults(data.questions || []); // ✅ data.questions موجودة في /api/quiz/results
   };
 
   const fetchStudents = async () => {
